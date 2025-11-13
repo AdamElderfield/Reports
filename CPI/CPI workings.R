@@ -21,6 +21,42 @@ calc_xlim <- function(df, x_col, has_callouts = FALSE, callout_extension = 2) {
   }
 }
 
+# Function to add callout annotations for long-format data
+add_callouts <- function(df, x_col, var_col, value_col, colors, x_offset = 0.5) {
+  max_x <- max(df[[x_col]], na.rm = TRUE)
+  vars <- unique(df[[var_col]])
+  annotations <- list()
+  
+  for (i in seq_along(vars)) {
+    var_name <- vars[i]
+    color <- colors[i]
+    
+    last_value <- df %>%
+      filter(.data[[var_col]] == var_name) %>%
+      filter(.data[[x_col]] == max(.data[[x_col]])) %>%
+      pull(.data[[value_col]])
+    
+    annotations[[length(annotations) + 1]] <- 
+      annotate("segment", 
+               x = max_x, xend = max_x + x_offset * 0.3, 
+               y = last_value, yend = last_value,
+               color = color, linewidth = 0.4)
+    
+    annotations[[length(annotations) + 1]] <- 
+      annotate("label", 
+               x = max_x + x_offset * 0.5, y = last_value, 
+               label = paste0(round(last_value, 2), "%"), 
+               hjust = 0, size = 2.5, fill = "white", 
+               color = ifelse(i == 1, "black", color),
+               label.padding = unit(0.1, "lines"))
+  }
+  
+  return(annotations)
+}
+
+
+
+
 #-------------------------- Weights data for charts 
 
 Weights <- readxl::read_xlsx("C:\\Users\\aelde\\OneDrive\\Documents\\GitHub\\MACRO_DATA\\MACRO_DATA\\Manual Download\\Consumer Price Index - 2025 Weighting Pattern.xlsx", sheet = "Table 1")
@@ -528,7 +564,7 @@ combined <- P1 + P2 + P3 + P4 + P5 + P6 +
   plot_layout(design = layout) +
   plot_annotation(
     title = "Headline inflation & key categories",
-    subtitle = "Key measures of inflation are now within the RBA's target range",
+    subtitle = "Inflation has ",
     theme = theme(
       plot.title = element_text(size = 20, face = "bold", hjust = 0),
       plot.subtitle = element_text(size = 14, hjust = 0)
