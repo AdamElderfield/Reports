@@ -1,0 +1,304 @@
+---
+title: "Monthly CPI"
+subtitle: "Through the year and Instantaneous"
+format: 
+  revealjs:
+    theme: default
+    width: 1600
+    height: 900
+---
+
+```{r setup, include=FALSE}
+# Instantaneous inflation -------------------
+
+library(tidyverse)
+library(plotly)
+library(htmltools)
+library(readabs)
+library(dplyr)
+library(FA)
+library(patchwork)
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+
+add_callouts <- function(df, x_col, var_col, value_col, colors, x_offset = 0.5) {
+  max_x <- max(df[[x_col]], na.rm = TRUE)
+  vars <- unique(df[[var_col]])
+  annotations <- list()
+  
+  for (i in seq_along(vars)) {
+    var_name <- vars[i]
+    color <- colors[i]
+    
+    last_value <- df %>%
+      filter(.data[[var_col]] == var_name) %>%
+      filter(.data[[x_col]] == max(.data[[x_col]])) %>%
+      pull(.data[[value_col]])
+    
+    annotations[[length(annotations) + 1]] <- 
+      annotate("segment", 
+               x = max_x, xend = max_x + x_offset * 0.3, 
+               y = last_value, yend = last_value,
+               color = color, linewidth = 0.4)
+    
+    annotations[[length(annotations) + 1]] <- 
+      annotate("label", 
+               x = max_x + x_offset * 0.5, y = last_value, 
+               label = paste0(round(last_value, 2), "%"), 
+               hjust = 0, size = 2.5, fill = "white", 
+               color = ifelse(i == 1, "black", color),
+               label.padding = unit(0.1, "lines"))
+  }
+  
+  return(annotations)
+}
+
+calc_xlim <- function(df, x_col, has_callouts = FALSE, callout_extension = 2) {
+  min_x <- min(df[[x_col]], na.rm = TRUE)
+  max_x <- max(df[[x_col]], na.rm = TRUE)
+  
+  if (has_callouts) {
+    return(c(min_x, max_x + callout_extension))
+  } else {
+    return(c(min_x, max_x))
+  }
+}
+
+
+# Function to create a plot for each variable
+create_plot <- function(var_name, data) {
+
+  plot_data <- data %>%
+    filter(Var == var_name) %>% 
+    ungroup() %>% 
+    select(-Var) %>% 
+    rename(Var = Measure)
+  
+   FA::line_plot(plot_data,title =var_name)+
+    theme(legend.position = "bottom")+
+    add_callouts(plot_data,x_col = "date",var_col = "Var",value_col = "value",colors = generate_pal(my_pal = "main", 2))+
+  coord_cartesian(xlim = calc_xlim(plot_data, "date", has_callouts = TRUE, callout_extension = 2), clip = "off")+
+     ylab("%")
+    
+  
+}
+
+
+#-----------------------------------------
+# DATA PREP
+#-----------------------------------------
+
+# Download Monthly CPI
+
+CPI.m <- read_abs("6484",tables = 1)
+
+# Remove uneccesary cols
+
+CPI.m1 <- CPI.m %>% 
+  separate_series() %>% 
+  filter(data_type == "INDEX" & series_3 == "Australia") %>%
+  select(date, series_2, value)
+  
+
+#-----------------------------------------
+# Create instantaneous inflation measure
+#-----------------------------------------
+
+# Function for kernal weighting
+KW <- function(a, BigT){
+  
+  ker <- matrix(0,BigT,1)
+  
+  for(i in 1:BigT){
+    
+    ker[i,] <- (BigT-(i-1))^a
+    
+  }
+  
+  sum_T_t_a <- sum(ker)
+  
+  for(i in 1:BigT){
+    
+    ker[i,] <- ker[i,]/sum_T_t_a*BigT
+    
+  }
+  
+  return(ker)
+  
+
+    
+}
+
+
+K <- KW(4,12)
+
+# Create instantaneous inflation for each CPI cat
+
+data <- CPI.m1 %>% 
+  group_by(series_2) %>% 
+  mutate(MI = value/lag(value)-1) %>% 
+  mutate(`Instantaneous Inflation` =  (1+MI)^K[1]*(1+lag(MI,1))^K[2]*(1+lag(MI,2))^K[3]*(1+lag(MI,3))^K[4]*(1+lag(MI,4))^K[5]*(1+lag(MI,5))^K[6]*(1+lag(MI,6))^K[7]*(1+lag(MI,7))^K[8]*(1+lag(MI,8))^K[9]*(1+lag(MI,9))^K[10]*(1+lag(MI,10))^K[11]*(1+lag(MI,11))^K[12]*100-100,
+         `TTY` = value/lag(value,12)*100-100) %>% 
+  select(-MI) %>% 
+  gather(Measure,value, -date,-series_2) %>% 
+  filter(date >="2021-06-01") %>% 
+  filter(Measure != "value") %>% 
+  rename(Var = series_2)
+
+# Groupings
+
+CPI_Cats <- data.frame(Var = unique(CPI.m1$series_2),group = NA)
+CPI_Cats[c(1,28,29,30,31,32),2] <- "All Groups 1"
+CPI_Cats[c(33,34),2] <- "All Groups 2"
+CPI_Cats[c(2:7),2] <- "Food, Bev, Tobacco 1"
+CPI_Cats[c(8:11),2] <- "Food, Bev, Tobacco 2"
+CPI_Cats[c(12:13),2] <- "Clothing"
+CPI_Cats[c(14:19),2] <- "Housing and utilities"
+CPI_Cats[c(20:23,26,27),2] <- "Essential Services"
+CPI_Cats[c(24,25),2] <- "Non-Essential Services"
+
+
+
+data <- data %>% 
+  left_join(CPI_Cats)
+
+
+
+```
+
+## All groups 1
+
+```{r slide-1}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "All Groups 1")
+  
+plots_1 <- lapply(unique(data1$Var), create_plot, data = data1)
+
+
+patchwork::wrap_plots(plots_1, ncol = 3)
+```
+
+## All groups 2
+
+```{r slide-2}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "All Groups 2")
+  
+plots_1 <- lapply(unique(data1$Var), create_plot, data = data1)
+
+
+patchwork::wrap_plots(plots_1, ncol = 2)
+```
+
+## Food, Beveridges, and Tobacco 1
+
+```{r slide-3}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "Food, Bev, Tobacco 1")
+
+plots_2 <- lapply(unique(data1$Var), create_plot, data = data)
+
+patchwork::wrap_plots(plots_2, ncol = 3)
+```
+
+## Food, Beveridges, and Tobacco 2
+
+```{r slide-4}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "Food, Bev, Tobacco 2")
+
+plots_3 <- lapply(unique(data1$Var), create_plot, data = data)
+
+patchwork::wrap_plots(plots_3, ncol = 2)
+```
+
+## Clothing
+
+```{r slide-5}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "Clothing")
+
+plots_4 <- lapply(unique(data1$Var), create_plot, data = data)
+
+patchwork::wrap_plots(plots_4, ncol = 2)
+```
+
+## Housing and utilities
+
+```{r slide-6}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "Housing and utilities")
+
+plots_5 <- lapply(unique(data1$Var), create_plot, data = data)
+
+patchwork::wrap_plots(plots_5, ncol = 3)
+```
+
+## Essential services
+
+```{r slide-7}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "Essential Services")
+
+plots_6 <- lapply(unique(data1$Var), create_plot, data = data)
+
+patchwork::wrap_plots(plots_6, ncol = 3)
+```
+
+## Non-essential services
+
+```{r slide-8}
+#| echo: false
+#| warning: false
+#| fig-width: 16
+#| fig-height: 9
+
+data1 <- data %>% 
+  filter(group == "Non-Essential Services")
+
+plots_7 <- lapply(unique(data1$Var), create_plot, data = data)
+
+patchwork::wrap_plots(plots_7, ncol = 2)
+```
+
+## Methodology
+
+-   Instantaneous inflation follows the approach of [Eeckhout (2023)](https://www.janeeckhout.com/wp-content/uploads/Instantaneous_Inflation.pdf)
+
+-   TTY is the percentage change on the same month a year earlier
